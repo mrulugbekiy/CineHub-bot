@@ -826,17 +826,17 @@ def admin_ingest(message):
     clean_caption = re.sub(r'release:\s*[\d\-: /]+', '', caption, flags=re.IGNORECASE)
     clean_caption = re.sub(r'expiry:\s*[\d\-: /]+', '', clean_caption, flags=re.IGNORECASE).strip()
 
-    key = gen_key()
+    key = gen_key()  # This generates vid_xxxxx
     add_file(key, video.file_id, clean_caption, release_time, expiry_date)
 
     bot_username = bot.get_me().username
-    logger.info(f"✅ Using bot username: {bot_username}")
+    logger.info(f"✅ Key stored: {key}")  # DEBUG: check in Railway logs
 
     bot.reply_to(
         message,
         f"✅ Asset ingested.\n"
         f"Key: `{key}`\n"
-        f"Deep-link: https://t.me/{bot_username}?start={key}\n"
+        f"Deep-link: https://t.me/{bot_username}?start={key}\n"   # ← key used directly
         f"Inline search: @{bot_username} {key}\n"
         f"Release: {release_time or 'immediate'}\n"
         f"Expiry: {expiry_date or 'never'}\n\n"
