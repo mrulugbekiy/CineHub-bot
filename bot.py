@@ -826,16 +826,23 @@ def menu_callback(call):
 # ---------- ADMIN COMMANDS ----------
 @bot.message_handler(content_types=['video', 'document'])
 def admin_ingest(message):
+    logger.info(f"📥 Video received from {message.from_user.id}")
+    
     if message.from_user.id != ADMIN_ID:
-        logger.warning(f"Unauthorized ingest attempt from {message.from_user.id}")
+        logger.warning(f"❌ Unauthorized ingest attempt from {message.from_user.id}")
         bot.reply_to(message, f"❌ You are not admin. Your ID: {message.from_user.id}")
         return
 
+    logger.info("✅ Admin verified")
+    
     video = message.video or message.document
     if not video:
-        bot.reply_to(message, "Please send a video file.")
+        logger.warning("❌ No video found in message")
+        bot.reply_to(message, "❌ Send a video file.")
         return
 
+    logger.info(f"✅ Video found: file_id={video.file_id[:20]}...")
+    
     caption = message.caption or ""
 
     # Parse genre and collection from caption
@@ -847,15 +854,21 @@ def admin_ingest(message):
 
     if genre_match:
         genre = genre_match.group(1).strip()
+        logger.info(f"🎭 Genre: {genre}")
     if collection_match:
         collection = collection_match.group(1).strip()
+        logger.info(f"📁 Collection: {collection}")
 
     # Clean caption (remove genre/collection tags)
     clean_caption = re.sub(r'genre:\s*[^\n]+', '', caption, flags=re.IGNORECASE)
     clean_caption = re.sub(r'collection:\s*[^\n]+', '', clean_caption, flags=re.IGNORECASE).strip()
 
     key = gen_key()
+    logger.info(f"🔑 Generated key: {key}")
+    
     add_file(key, video.file_id, clean_caption, genre, collection)
+    logger.info(f"💾 File saved to database")
+    
     bot_username = bot.get_me().username
 
     response = (
@@ -869,6 +882,7 @@ def admin_ingest(message):
         response += f"Collection: {collection}\n"
 
     bot.reply_to(message, response, parse_mode="Markdown")
+    logger.info(f"✅ Reply sent to user")
 
 @bot.message_handler(commands=['addtrivia'])
 def add_trivia_command(message):
