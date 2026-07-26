@@ -3,7 +3,7 @@
 Cinehub Vault Bot – Premium Edition with Auto-Key from Title
 Keys are derived from the movie title (caption or filename).
 """
-
+import pytz
 import os
 import sys
 import time
@@ -420,7 +420,6 @@ def main_menu_keyboard():
     )
     return keyboard
 
-import pytz
 from datetime import datetime
 
 TIMEZONE = pytz.timezone('Asia/Tashkent')
