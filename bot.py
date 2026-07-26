@@ -420,7 +420,13 @@ def main_menu_keyboard():
     )
     return keyboard
 
+import pytz
+from datetime import datetime
+
+TIMEZONE = pytz.timezone('Asia/Tashkent')
+
 def generate_claim_card(user, key, trivia=None):
+    now = datetime.now(TIMEZONE).strftime('%B %d, %Y at %I:%M %p')
     lines = []
     lines.append("══════════════════════════════")
     lines.append("        🎬 THE VAULT 🎬")
@@ -428,7 +434,7 @@ def generate_claim_card(user, key, trivia=None):
     lines.append("")
     lines.append(f"   👤 {user.first_name or 'Cinehead'}")
     lines.append(f"   🔑 Claimed: {key}")
-    lines.append(f"   📅 {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+    lines.append(f"   📅 {now}")
     lines.append("")
     lines.append("   🎯 Stay tuned for more assets!")
     if trivia:
