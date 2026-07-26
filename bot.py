@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Cinehub Vault Bot – Custom Edition
-Features: Force subscribe, Admin commands, User commands, Custom welcome, Export logs, User info, Purge.
-No inline mode, no daily limits, no claim limits, no release/expiry, no auto-cleanup.
+Cinehub Vault Bot – Premium Edition
+Features: Leaderboard, Claim Cards, Trivia, User Requests, Collections, Surprise with Filters, Personal Stats.
 Keys are generated without underscores (e.g., vid5s0fcc).
 """
 
@@ -15,7 +14,7 @@ import string
 import logging
 import csv
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 from telebot import TeleBot, types
 
 # ---------- ENVIRONMENT ----------
@@ -42,15 +41,21 @@ def get_db():
 def init_db():
     conn = get_db()
     c = conn.cursor()
+
+    # Files table with genre/category
     c.execute("""
         CREATE TABLE IF NOT EXISTS files (
             key TEXT PRIMARY KEY,
             file_id TEXT NOT NULL,
             caption TEXT,
             uploaded TEXT NOT NULL,
-            downloads INTEGER DEFAULT 0
+            downloads INTEGER DEFAULT 0,
+            genre TEXT DEFAULT NULL,
+            collection TEXT DEFAULT NULL
         )
     """)
+
+    # Users table
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,
@@ -58,9 +63,12 @@ def init_db():
             name TEXT,
             joined TEXT NOT NULL,
             last_seen TEXT,
-            blacklisted INTEGER DEFAULT 0
+            blacklisted INTEGER DEFAULT 0,
+            total_claims INTEGER DEFAULT 0
         )
     """)
+
+    # Logs table
     c.execute("""
         CREATE TABLE IF NOT EXISTS logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,17 +77,41 @@ def init_db():
             time TEXT NOT NULL
         )
     """)
+
+    # Trivia table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS trivia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL
+        )
+    """)
+
+    # User requests table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            username TEXT,
+            title TEXT NOT NULL,
+            time TEXT NOT NULL,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+
+    # Config table
     c.execute("""
         CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
             value TEXT
         )
     """)
+
     defaults = {
         "welcome_message": "This is The Vault. Type a secret passcode or use a valid deep-link to pull files.",
     }
     for k, v in defaults.items():
         c.execute("INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, v))
+
     conn.commit()
     conn.close()
     logger.info("✅ Database ready.")
@@ -150,13 +182,32 @@ def get_all_logs():
     conn.close()
     return [dict(r) for r in rows]
 
+def get_user_stats(user_id):
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) FROM logs WHERE user_id=?", (user_id,)).fetchone()[0]
+    today = datetime.now().date().isoformat()
+    today_claims = conn.execute(
+        "SELECT COUNT(*) FROM logs WHERE user_id=? AND date(time) = ?",
+        (user_id, today)
+    ).fetchone()[0]
+    last = conn.execute(
+        "SELECT time FROM logs WHERE user_id=? ORDER BY time DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+    return {
+        "total_claims": total,
+        "today_claims": today_claims,
+        "last_claim": last["time"] if last else None
+    }
+
 # ---------- FILE HELPERS ----------
-def add_file(key, file_id, caption=""):
+def add_file(key, file_id, caption="", genre=None, collection=None):
     now = datetime.now().isoformat()
     conn = get_db()
     conn.execute(
-        "INSERT INTO files (key, file_id, caption, uploaded) VALUES (?,?,?,?)",
-        (key, file_id, caption, now)
+        "INSERT INTO files (key, file_id, caption, uploaded, genre, collection) VALUES (?,?,?,?,?,?)",
+        (key, file_id, caption, now, genre, collection)
     )
     conn.commit()
     conn.close()
@@ -171,7 +222,7 @@ def get_file(key):
 def get_all_files():
     conn = get_db()
     rows = conn.execute(
-        "SELECT key, uploaded, downloads FROM files ORDER BY uploaded DESC"
+        "SELECT key, uploaded, downloads, caption, genre, collection FROM files ORDER BY uploaded DESC"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -193,6 +244,7 @@ def log_claim(user_id, key):
         "INSERT INTO logs (user_id, file_key, time) VALUES (?,?,?)",
         (user_id, key, now)
     )
+    conn.execute("UPDATE users SET total_claims = total_claims + 1 WHERE id=?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -200,28 +252,56 @@ def search_files(query):
     conn = get_db()
     like = f"%{query}%"
     rows = conn.execute(
-        "SELECT key, caption, uploaded, downloads FROM files "
-        "WHERE key LIKE ? OR caption LIKE ? ORDER BY uploaded DESC LIMIT 50",
-        (like, like)
+        "SELECT key, caption, uploaded, downloads, genre, collection FROM files "
+        "WHERE key LIKE ? OR caption LIKE ? OR genre LIKE ? OR collection LIKE ? "
+        "ORDER BY uploaded DESC LIMIT 50",
+        (like, like, like, like)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-def get_random_file():
+def get_files_by_collection(collection):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT key, caption, uploaded, downloads FROM files WHERE collection = ? ORDER BY uploaded DESC",
+        (collection,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_files_by_genre(genre):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT key, caption, uploaded, downloads FROM files WHERE genre = ? ORDER BY uploaded DESC",
+        (genre,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_collections():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT DISTINCT collection FROM files WHERE collection IS NOT NULL AND collection != ''"
+    ).fetchall()
+    conn.close()
+    return [r["collection"] for r in rows]
+
+def get_genres():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT DISTINCT genre FROM files WHERE genre IS NOT NULL AND genre != ''"
+    ).fetchall()
+    conn.close()
+    return [r["genre"] for r in rows]
+
+def get_random_file_by_genre(genre):
     conn = get_db()
     row = conn.execute(
-        "SELECT * FROM files ORDER BY RANDOM() LIMIT 1"
+        "SELECT * FROM files WHERE genre = ? ORDER BY RANDOM() LIMIT 1",
+        (genre,)
     ).fetchone()
     conn.close()
     return dict(row) if row else None
-
-def get_user_claimed_keys(user_id):
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT DISTINCT file_key FROM logs WHERE user_id=?", (user_id,)
-    ).fetchall()
-    conn.close()
-    return [r["file_key"] for r in rows]
 
 def get_stats():
     conn = get_db()
@@ -231,13 +311,71 @@ def get_stats():
     top_files = conn.execute(
         "SELECT key, downloads FROM files ORDER BY downloads DESC LIMIT 3"
     ).fetchall()
+    top_users = conn.execute(
+        "SELECT id, username, total_claims FROM users ORDER BY total_claims DESC LIMIT 10"
+    ).fetchall()
     conn.close()
     return {
         "total_users": users,
         "total_files": files,
         "total_deliveries": deliveries,
         "top_files": [dict(r) for r in top_files],
+        "top_users": [dict(r) for r in top_users],
     }
+
+# ---------- TRIVIA HELPERS ----------
+def get_random_trivia():
+    conn = get_db()
+    row = conn.execute("SELECT text FROM trivia ORDER BY RANDOM() LIMIT 1").fetchone()
+    conn.close()
+    return row["text"] if row else None
+
+def add_trivia(text):
+    conn = get_db()
+    conn.execute("INSERT INTO trivia (text) VALUES (?)", (text,))
+    conn.commit()
+    conn.close()
+
+def get_all_trivia():
+    conn = get_db()
+    rows = conn.execute("SELECT id, text FROM trivia").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def delete_trivia(trivia_id):
+    conn = get_db()
+    conn.execute("DELETE FROM trivia WHERE id=?", (trivia_id,))
+    deleted = conn.total_changes > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+# ---------- REQUEST HELPERS ----------
+def add_request(user_id, username, title):
+    now = datetime.now().isoformat()
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO requests (user_id, username, title, time) VALUES (?,?,?,?)",
+        (user_id, username, title, now)
+    )
+    conn.commit()
+    conn.close()
+
+def get_pending_requests():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM requests WHERE status = 'pending' ORDER BY time ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def resolve_request(request_id):
+    conn = get_db()
+    conn.execute("UPDATE requests SET status = 'resolved' WHERE id=?", (request_id,))
+    resolved = conn.total_changes > 0
+    conn.commit()
+    conn.close()
+    return resolved
 
 # ---------- HELPERS ----------
 def gen_key():
@@ -259,19 +397,37 @@ def join_verify_keyboard(key):
     return keyboard
 
 def main_menu_keyboard():
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.row(
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
         types.InlineKeyboardButton("🔍 Search", callback_data="menu:search"),
-        types.InlineKeyboardButton("🎲 Surprise", callback_data="menu:surprise")
-    )
-    keyboard.row(
+        types.InlineKeyboardButton("🎲 Surprise", callback_data="menu:surprise"),
         types.InlineKeyboardButton("📜 My History", callback_data="menu:history"),
-        types.InlineKeyboardButton("📊 Stats", callback_data="menu:stats")
-    )
-    keyboard.row(
+        types.InlineKeyboardButton("🏆 Leaderboard", callback_data="menu:leaderboard"),
+        types.InlineKeyboardButton("📊 My Stats", callback_data="menu:mystats"),
         types.InlineKeyboardButton("ℹ️ Help", callback_data="menu:help")
     )
     return keyboard
+
+def generate_claim_card(user, key, trivia=None):
+    """Generate a text-based claim card."""
+    lines = []
+    lines.append("══════════════════════════════")
+    lines.append("        🎬 THE VAULT 🎬")
+    lines.append("══════════════════════════════")
+    lines.append("")
+    lines.append(f"   👤 {user.first_name or 'Cinehead'}")
+    lines.append(f"   🔑 Claimed: {key}")
+    lines.append(f"   📅 {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+    lines.append("")
+    lines.append("   🎯 Stay tuned for more assets!")
+    if trivia:
+        lines.append("")
+        lines.append("   💡 Fun Fact:")
+        lines.append(f"   {trivia}")
+    lines.append("")
+    lines.append("══════════════════════════════")
+    lines.append("    @cinehubvaultbot")
+    return "\n".join(lines)
 
 def deliver_file(message, key):
     user = message.from_user
@@ -285,6 +441,15 @@ def deliver_file(message, key):
 
     try:
         bot.send_video(message.chat.id, f["file_id"], caption=f.get("caption", ""))
+
+        # Get random trivia
+        trivia = get_random_trivia()
+
+        # Send claim card
+        card = generate_claim_card(user, key, trivia)
+        bot.send_message(message.chat.id, card)
+
+        # If there's trivia, send it separately (already in card)
         bot.send_message(message.chat.id, "🎬 Video dropping now. Keep quiet and enjoy the screen.")
     except Exception as e:
         logger.error(f"Delivery error: {e}")
@@ -334,10 +499,15 @@ def help_command(message):
 3️⃣ Type the passcode here or click the link.
 4️⃣ Enjoy the file!
 
-**Commands:**
+**User Commands:**
 /search <term> – find files
-/surprise – get a random file
+/surprise [genre] – get random file (optional: filter by genre)
 /mylogs – see your history
+/mystats – your personal stats
+/leaderboard – top claimers
+/request <title> – request a file
+/collections – see all collections
+/genres – see all genres
 /start – show this menu
         """
     )
@@ -362,7 +532,9 @@ def search_command(message):
 
     msg = f"🔎 **Search results for '{query}'**\n"
     for r in results[:10]:
-        msg += f"• `{r['key']}` – {r.get('caption', 'no caption')[:30]} (pulls: {r['downloads']})\n"
+        genre = f" [{r.get('genre')}]" if r.get('genre') else ""
+        collection = f" 📁{r['collection']}" if r.get('collection') else ""
+        msg += f"• `{r['key']}` – {r.get('caption', 'no caption')[:30]}{genre}{collection} (pulls: {r['downloads']})\n"
 
     if len(results) > 10:
         msg += f"\n... and {len(results) - 10} more."
@@ -378,7 +550,29 @@ def surprise_command(message):
         bot.reply_to(message, "⛔ Access denied.")
         return
 
-    f = get_random_file()
+    # Check if a genre filter was provided
+    args = message.text.split(maxsplit=1)
+    genre = args[1] if len(args) > 1 else None
+
+    if genre:
+        f = get_random_file_by_genre(genre)
+        if not f:
+            bot.reply_to(message, f"No files found in genre `{genre}`. Check /genres for available genres.")
+            return
+    else:
+        f = get_random_file_by_genre(None) or get_all_files()[:1]
+        if f and len(f) > 0:
+            if isinstance(f, list):
+                # If get_random_file_by_genre(None) returns None, we already have the fallback
+                pass
+        if not f:
+            # Get any random file
+            all_files = get_all_files()
+            if all_files:
+                f = random.choice(all_files)
+            else:
+                f = None
+
     if not f:
         bot.reply_to(message, "No available files right now. Try again later.")
         return
@@ -407,9 +601,128 @@ def mylogs_command(message):
         f = get_file(k)
         if f:
             downloads = f["downloads"]
-            msg += f"• `{k}` – pulled {downloads} times total\n"
+            genre = f" [{f.get('genre')}]" if f.get('genre') else ""
+            msg += f"• `{k}`{genre} – pulled {downloads} times total\n"
 
     bot.reply_to(message, msg)
+
+def get_user_claimed_keys(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT DISTINCT file_key FROM logs WHERE user_id=?", (user_id,)
+    ).fetchall()
+    conn.close()
+    return [r["file_key"] for r in rows]
+
+@bot.message_handler(commands=['mystats'])
+def mystats_command(message):
+    user = message.from_user
+    stats = get_user_stats(user.id)
+
+    msg = (
+        f"📊 **Your Personal Stats**\n"
+        f"• Total claims: {stats['total_claims']}\n"
+        f"• Today's claims: {stats['today_claims']}\n"
+        f"• Joined: {datetime.now().strftime('%B %d, %Y')}\n"
+    )
+    if stats['last_claim']:
+        dt = datetime.fromisoformat(stats['last_claim'])
+        msg += f"• Last claim: {dt.strftime('%B %d, %Y at %I:%M %p')}"
+
+    bot.reply_to(message, msg)
+
+@bot.message_handler(commands=['leaderboard'])
+def leaderboard_command(message):
+    stats = get_stats()
+
+    if not stats['top_users']:
+        bot.reply_to(message, "No users have claimed anything yet.")
+        return
+
+    msg = "🏆 **Cinehead Leaderboard**\n\n"
+
+    emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    for i, user in enumerate(stats['top_users'], 1):
+        name = user['username'] or f"User {user['id']}"
+        emoji = emojis[i-1] if i <= len(emojis) else f"{i}."
+        msg += f"{emoji} @{name} – {user['total_claims']} claims\n"
+
+    bot.reply_to(message, msg)
+
+@bot.message_handler(commands=['collections'])
+def collections_command(message):
+    collections = get_collections()
+
+    if not collections:
+        bot.reply_to(message, "No collections available.")
+        return
+
+    msg = "📁 **Available Collections**\n\n"
+    for c in collections:
+        files = get_files_by_collection(c)
+        count = len(files)
+        msg += f"• 📂 {c} ({count} files)\n"
+
+    msg += f"\nType `/collection <name>` to view files in a collection."
+
+    bot.reply_to(message, msg)
+
+@bot.message_handler(commands=['collection'])
+def collection_command(message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /collection <collection_name>\nUse /collections to see available collections.")
+        return
+
+    collection = args[1]
+    files = get_files_by_collection(collection)
+
+    if not files:
+        bot.reply_to(message, f"No files found in collection `{collection}`.")
+        return
+
+    msg = f"📁 **Collection: {collection}**\n\n"
+    for f in files:
+        msg += f"• `{f['key']}` – {f.get('caption', 'no caption')[:30]} (pulls: {f['downloads']})\n"
+
+    bot.reply_to(message, msg)
+
+@bot.message_handler(commands=['genres'])
+def genres_command(message):
+    genres = get_genres()
+
+    if not genres:
+        bot.reply_to(message, "No genres available.")
+        return
+
+    msg = "🎭 **Available Genres**\n\n"
+    for g in genres:
+        files = get_files_by_genre(g)
+        count = len(files)
+        msg += f"• 🎬 {g} ({count} files)\n"
+
+    msg += f"\nType `/surprise <genre>` to get a random file from a genre."
+
+    bot.reply_to(message, msg)
+
+@bot.message_handler(commands=['request'])
+def request_command(message):
+    user = message.from_user
+    args = message.text.split(maxsplit=1)
+
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /request <movie/file name>")
+        return
+
+    title = args[1]
+    add_request(user.id, user.username or "", title)
+
+    bot.reply_to(
+        message,
+        f"✅ Request submitted: '{title}'\n"
+        f"Admins will review it and add it to The Vault if possible."
+    )
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_passcode(message):
@@ -468,6 +781,14 @@ def verify_callback(call):
 
     try:
         bot.send_video(call.message.chat.id, f["file_id"], caption=f.get("caption", ""))
+
+        # Get random trivia
+        trivia = get_random_trivia()
+
+        # Send claim card
+        card = generate_claim_card(user, key, trivia)
+        bot.send_message(call.message.chat.id, card)
+
         bot.send_message(call.message.chat.id, "🎬 Video dropping now. Keep quiet and enjoy the screen.")
     except Exception as e:
         logger.error(f"Delivery via verify failed: {e}")
@@ -490,18 +811,13 @@ def menu_callback(call):
         bot.answer_callback_query(call.id)
         mylogs_command(call.message)
 
-    elif action == "stats":
+    elif action == "leaderboard":
         bot.answer_callback_query(call.id)
-        user = call.from_user
-        info = get_user_info(user.id)
-        if info:
-            msg = (
-                f"📊 **Your Stats**\n"
-                f"• Total claims: {info['total_claims']}\n"
-                f"• Joined: {info['joined'][:10]}\n"
-                f"• Last seen: {info['last_seen'][:10]}\n"
-            )
-            bot.send_message(call.message.chat.id, msg)
+        leaderboard_command(call.message)
+
+    elif action == "mystats":
+        bot.answer_callback_query(call.id)
+        mystats_command(call.message)
 
     elif action == "help":
         bot.answer_callback_query(call.id)
@@ -520,17 +836,136 @@ def admin_ingest(message):
         bot.reply_to(message, "Please send a video file.")
         return
 
+    caption = message.caption or ""
+
+    # Parse genre and collection from caption
+    genre = None
+    collection = None
+
+    genre_match = re.search(r'genre:\s*([^\n]+)', caption, re.IGNORECASE)
+    collection_match = re.search(r'collection:\s*([^\n]+)', caption, re.IGNORECASE)
+
+    if genre_match:
+        genre = genre_match.group(1).strip()
+    if collection_match:
+        collection = collection_match.group(1).strip()
+
+    # Clean caption (remove genre/collection tags)
+    clean_caption = re.sub(r'genre:\s*[^\n]+', '', caption, flags=re.IGNORECASE)
+    clean_caption = re.sub(r'collection:\s*[^\n]+', '', clean_caption, flags=re.IGNORECASE).strip()
+
     key = gen_key()
-    add_file(key, video.file_id, message.caption or "")
+    add_file(key, video.file_id, clean_caption, genre, collection)
     bot_username = bot.get_me().username
 
-    bot.reply_to(
-        message,
+    response = (
         f"✅ Asset ingested.\n"
         f"Key: `{key}`\n"
-        f"Deep-link: https://t.me/{bot_username}?start={key}",
-        parse_mode="Markdown"
+        f"Deep-link: https://t.me/{bot_username}?start={key}\n"
     )
+    if genre:
+        response += f"Genre: {genre}\n"
+    if collection:
+        response += f"Collection: {collection}\n"
+
+    bot.reply_to(message, response, parse_mode="Markdown")
+
+@bot.message_handler(commands=['addtrivia'])
+def add_trivia_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ You are not admin.")
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /addtrivia <fun fact about a file>")
+        return
+
+    add_trivia(args[1])
+    bot.reply_to(message, "✅ Trivia added! Users will see it when they claim files.")
+
+@bot.message_handler(commands=['trivialist'])
+def trivialist_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ You are not admin.")
+        return
+
+    trivia_list = get_all_trivia()
+    if not trivia_list:
+        bot.reply_to(message, "No trivia added yet.")
+        return
+
+    msg = "📚 **Trivia List**\n\n"
+    for t in trivia_list:
+        msg += f"• `{t['id']}` – {t['text'][:50]}...\n"
+
+    msg += "\nUse /deletetrivia <id> to remove a trivia."
+
+    bot.reply_to(message, msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=['deletetrivia'])
+def deletetrivia_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ You are not admin.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /deletetrivia <id>")
+        return
+
+    try:
+        trivia_id = int(args[1])
+    except ValueError:
+        bot.reply_to(message, "Invalid ID.")
+        return
+
+    if delete_trivia(trivia_id):
+        bot.reply_to(message, f"✅ Trivia {trivia_id} deleted.")
+    else:
+        bot.reply_to(message, f"Trivia {trivia_id} not found.")
+
+@bot.message_handler(commands=['requests'])
+def requests_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ You are not admin.")
+        return
+
+    requests = get_pending_requests()
+    if not requests:
+        bot.reply_to(message, "No pending requests.")
+        return
+
+    msg = "📋 **Pending Requests**\n\n"
+    for r in requests:
+        dt = datetime.fromisoformat(r['time'])
+        msg += f"• `{r['id']}` – {r['title']} (by @{r['username'] or 'unknown'}) at {dt.strftime('%B %d, %I:%M %p')}\n"
+
+    msg += "\nUse /resolverequest <id> to mark as resolved."
+
+    bot.reply_to(message, msg, parse_mode="Markdown")
+
+@bot.message_handler(commands=['resolverequest'])
+def resolverequest_command(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ You are not admin.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "Usage: /resolverequest <id>")
+        return
+
+    try:
+        request_id = int(args[1])
+    except ValueError:
+        bot.reply_to(message, "Invalid ID.")
+        return
+
+    if resolve_request(request_id):
+        bot.reply_to(message, f"✅ Request {request_id} marked as resolved.")
+    else:
+        bot.reply_to(message, f"Request {request_id} not found or already resolved.")
 
 @bot.message_handler(commands=['listfiles'])
 def listfiles_command(message):
@@ -545,7 +980,12 @@ def listfiles_command(message):
 
     msg = "🗂️ **Archive Inventory**\n\n"
     for f in files:
-        msg += f"• `{f['key']}` – pulls: {f['downloads']} | uploaded: {f['uploaded'][:10]}\n"
+        msg += f"• `{f['key']}` – pulls: {f['downloads']} | uploaded: {f['uploaded'][:10]}"
+        if f.get('genre'):
+            msg += f" | 🎬 {f['genre']}"
+        if f.get('collection'):
+            msg += f" | 📁 {f['collection']}"
+        msg += "\n"
 
     bot.reply_to(message, msg, parse_mode="Markdown")
 
@@ -768,6 +1208,7 @@ def purge_callback(call):
         conn = get_db()
         conn.execute("DELETE FROM logs")
         conn.execute("DELETE FROM files")
+        conn.execute("DELETE FROM requests")
         conn.commit()
         conn.close()
         bot.edit_message_text("✅ All files and logs have been deleted.", call.message.chat.id, call.message.message_id)
