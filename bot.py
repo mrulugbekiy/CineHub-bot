@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Cinehub Vault Bot – MINIMAL WORKING VERSION
-Just upload and claim – no extra features.
+Cinehub Vault Bot – MINIMAL WORKING VERSION (FIXED)
+No underscores in keys – deep-links work perfectly.
 """
 
 import os
@@ -70,7 +70,8 @@ def get_file(key):
     return dict(row) if row else None
 
 def gen_key():
-    return "vid_" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    # ✅ FIXED: No underscore in the key!
+    return "vid" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
 
 def check_subscription(user_id):
     try:
