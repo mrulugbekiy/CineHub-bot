@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Cinehub Vault Bot – SIMPLEST WORKING VERSION
-Uses SQLite (no external database). 
-All features working. No environment variables except TOKEN.
+Cinehub Vault Bot – FULLY WORKING with Debug
+All commands reply with debug info so you know what's happening.
 """
 
 import os
@@ -25,7 +24,9 @@ if not TOKEN:
     print("❌ TOKEN not set")
     sys.exit(1)
 
-ADMIN_ID = 6537318639
+# ⚠️ REPLACE THIS WITH YOUR ACTUAL USER ID (from /myid)
+ADMIN_ID = 6537318639  # <-- CHANGE THIS TO YOUR REAL ID
+
 CHANNEL = "ulugbekiy_movies"
 TIMEZONE = pytz.timezone('Asia/Tashkent')
 DB = "vault.db"
@@ -447,11 +448,39 @@ def help_command(message):
 /collections – see collections
 /genres – see genres
 /start – show menu
+
+**Admin Commands:**
+/addtrivia <text> – add fun fact
+/trivialist – list all trivia
+/deletetrivia <id> – delete trivia
+/requests – view pending requests
+/resolverequest <id> – resolve a request
+/listfiles – view all files
+/stats – view telemetry
+/ban <user_id> – ban a user
+/unban <user_id> – unban a user
+/broadcast – reply to a message
+/setwelcome <text> – change welcome
+/export – export logs as CSV
+/userinfo <user_id> – view user details
+/backup – backup files as CSV
+/purge – delete all files (with confirmation)
         """)
 
 @bot.message_handler(commands=['myid'])
 def myid_command(message):
     bot.reply_to(message, f"Your user ID: `{message.from_user.id}`")
+
+@bot.message_handler(commands=['debugadmin'])
+def debugadmin_command(message):
+    bot.reply_to(message, f"""
+🔍 **Admin Debug Info**
+Your ID: `{message.from_user.id}`
+ADMIN_ID in code: `{ADMIN_ID}`
+Match: `{message.from_user.id == ADMIN_ID}`
+
+If they don't match, update ADMIN_ID in bot.py and redeploy.
+        """)
 
 @bot.message_handler(commands=['search'])
 def search_command(message):
@@ -649,13 +678,12 @@ def menu_callback(call):
         bot.answer_callback_query(call.id)
         help_command(call.message)
 
-# ---------- ADMIN COMMANDS ----------
+# ---------- ADMIN COMMANDS (WITH DEBUG) ----------
 @bot.message_handler(content_types=['video', 'document'])
 def admin_ingest(message):
-    import re
-    logger.info(f"📥 File received from {message.from_user.id}")
+    logger.info(f"📥 Ingest from {message.from_user.id}, ADMIN_ID: {ADMIN_ID}")
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, f"❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     video = None
     if message.content_type == 'video':
@@ -699,7 +727,7 @@ def admin_ingest(message):
 @bot.message_handler(commands=['addtrivia'])
 def add_trivia_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -711,7 +739,7 @@ def add_trivia_command(message):
 @bot.message_handler(commands=['trivialist'])
 def trivialist_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     t_list = get_all_trivia()
     if not t_list:
@@ -725,7 +753,7 @@ def trivialist_command(message):
 @bot.message_handler(commands=['deletetrivia'])
 def deletetrivia_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split()
     if len(args) < 2:
@@ -742,7 +770,7 @@ def deletetrivia_command(message):
 @bot.message_handler(commands=['requests'])
 def requests_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     reqs = get_pending_requests()
     if not reqs:
@@ -757,7 +785,7 @@ def requests_command(message):
 @bot.message_handler(commands=['resolverequest'])
 def resolverequest_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split()
     if len(args) < 2:
@@ -774,7 +802,7 @@ def resolverequest_command(message):
 @bot.message_handler(commands=['listfiles'])
 def listfiles_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     files = get_all_files()
     if not files:
@@ -793,7 +821,7 @@ def listfiles_command(message):
 @bot.message_handler(commands=['stats'])
 def stats_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     stats = get_stats()
     msg = f"📊 **Vault Telemetry**\n• Total Cineheads: {stats['total_users']}\n• Total indexed assets: {stats['total_files']}\n• Total deliveries: {stats['total_deliveries']}\n\n🏆 **Top passkeys**\n"
@@ -807,7 +835,7 @@ def stats_command(message):
 @bot.message_handler(commands=['ban'])
 def ban_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split()
     if len(args) < 2:
@@ -829,7 +857,7 @@ def ban_command(message):
 @bot.message_handler(commands=['unban'])
 def unban_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split()
     if len(args) < 2:
@@ -851,7 +879,7 @@ def unban_command(message):
 @bot.message_handler(commands=['broadcast'])
 def broadcast_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     if not message.reply_to_message:
         bot.reply_to(message, "Reply to a message with /broadcast.")
@@ -876,7 +904,7 @@ def broadcast_command(message):
 @bot.message_handler(commands=['setwelcome'])
 def setwelcome_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -888,7 +916,7 @@ def setwelcome_command(message):
 @bot.message_handler(commands=['export'])
 def export_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     logs = get_all_logs()
     if not logs:
@@ -906,7 +934,7 @@ def export_command(message):
 @bot.message_handler(commands=['userinfo'])
 def userinfo_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     args = message.text.split()
     if len(args) < 2:
@@ -928,6 +956,7 @@ def userinfo_command(message):
 @bot.message_handler(commands=['backup'])
 def backup_command(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     try:
         files = get_all_files()
@@ -948,7 +977,7 @@ def backup_command(message):
 @bot.message_handler(commands=['purge'])
 def purge_command(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ You are not admin.")
+        bot.reply_to(message, f"❌ Not admin. Your ID: {message.from_user.id}")
         return
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(types.InlineKeyboardButton("⚠️ YES, DELETE ALL", callback_data="purge:confirm"), types.InlineKeyboardButton("❌ Cancel", callback_data="purge:cancel"))
@@ -977,6 +1006,7 @@ def purge_callback(call):
 if __name__ == "__main__":
     init_db()
     logger.info(f"✅ Bot username: {bot.get_me().username}")
+    logger.info(f"✅ ADMIN_ID: {ADMIN_ID}")
     logger.info("✅ Bot started! Polling...")
     try:
         bot.infinity_polling()
